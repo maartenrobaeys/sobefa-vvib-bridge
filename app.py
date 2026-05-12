@@ -171,6 +171,22 @@ with st.spinner("Koersen ophalen..."):
     market_prices = fetch_prices(tickers)
 
 # =====================================================
+# AUTO-FIX MISSING COLUMNS
+# =====================================================
+
+if "VV_BuyPrice" not in df.columns:
+    st.warning(
+        "Geen VV_BuyPrice gevonden in CSV → huidige marktprijs wordt tijdelijk gebruikt als referentieprijs."
+    )
+    df["VV_BuyPrice"] = np.nan
+
+if "Shares" not in df.columns:
+    df["Shares"] = 0
+
+if "Stop" not in df.columns:
+    df["Stop"] = np.nan
+
+# =====================================================
 # BUILD CORE TRACKER
 # =====================================================
 
@@ -179,6 +195,11 @@ tracker_df = pd.DataFrame()
 tracker_df["Ticker"] = df["Symbol"]
 tracker_df["VV Buy Price"] = df.get("VV_BuyPrice", np.nan)
 tracker_df["Current Price"] = tracker_df["Ticker"].map(market_prices)
+
+# fallback wanneer VV buyprice ontbreekt
+tracker_df["VV Buy Price"] = tracker_df["VV Buy Price"].fillna(
+    tracker_df["Current Price"]
+)
 
 tracker_df["IB Entry Price"] = tracker_df["Current Price"]
 
@@ -269,6 +290,12 @@ selected_ticker = st.selectbox(
 selected_row = tracker_df[
     tracker_df["Ticker"] == selected_ticker
 ].iloc[0]
+
+if pd.isna(selected_row["Current Price"]):
+    st.error(
+        "Geen prijsdata beschikbaar voor deze ticker. Controleer ticker symbool of Yahoo Finance availability."
+    )
+    st.stop()
 
 fig = go.Figure()
 
@@ -477,3 +504,4 @@ st.success(
 st.caption(
     "Delayed pricing via Yahoo Finance | Built for educational/research purposes"
 )
+
