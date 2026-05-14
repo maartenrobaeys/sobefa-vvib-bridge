@@ -168,6 +168,149 @@ def parse_trade_history(df_raw):
     return parsed_df
 
 # =====================================================
+# OCR + PORTFOLIO MEMORY ENGINE V3
+# =====================================================
+
+import json
+import os
+
+try:
+    import pytesseract
+    from PIL import Image
+    OCR_AVAILABLE = True
+except:
+    OCR_AVAILABLE = False
+
+MEMORY_FILE = "portfolio_memory.json"
+
+
+def clean_numeric(value):
+    if pd.isna(value):
+        return np.nan
+
+    value = str(value)
+    value = value.replace("$", "")
+    value = value.replace(",", "")
+    value = value.strip()
+
+    try:
+        return float(value)
+    except:
+        return np.nan
+
+
+def extract_holdings_from_screenshot(image):
+
+    if not OCR_AVAILABLE:
+        st.warning(
+            "OCR libraries niet beschikbaar op deployment. Voeg pytesseract + pillow toe aan requirements.txt"
+        )
+        return pd.DataFrame()
+
+    try:
+
+        text = pytesseract.image_to_string(image)
+        lines = text.split("
+")
+
+        parsed_rows = []
+
+        for line in lines:
+
+            line = line.strip()
+
+            if len(line) < 5:
+                continue
+
+            parts = line.split()
+
+            # simpele ticker detectie
+            possible_ticker = parts[0].upper()
+
+            if (
+                len(possible_ticker) <= 5 and
+                possible_ticker.isalpha()
+            ):
+
+                numbers = []
+
+                for p in parts:
+                    num = clean_numeric(p)
+                    if not pd.isna(num):
+                        numbers.append(num)
+
+                buy_price = np.nan
+                stop_price = np.nan
+
+                if len(numbers) >= 1:
+                    buy_price = numbers[0]
+
+                if len(numbers) >= 2:
+                    stop_price = numbers[1]
+
+                parsed_rows.append({
+                    "Symbol": possible_ticker,
+                    "VV_BuyPrice": buy_price,
+                    "Stop": stop_price
+                })
+
+        screenshot_df = pd.DataFrame(parsed_rows)
+
+        screenshot_df = screenshot_df.drop_duplicates(
+            subset=["Symbol"]
+        )
+
+        return screenshot_df
+
+    except Exception as e:
+
+        st.error(f"OCR parsing fout: {e}")
+        return pd.DataFrame()
+
+
+def save_portfolio_memory(df_memory):
+
+    try:
+
+        memory_records = df_memory.to_dict(orient="records")
+
+        with open(MEMORY_FILE, "w") as f:
+            json.dump(memory_records, f)
+
+    except:
+        pass
+
+
+def load_previous_memory():
+
+    if not os.path.exists(MEMORY_FILE):
+        return pd.DataFrame()
+
+    try:
+
+        with open(MEMORY_FILE, "r") as f:
+            data = json.load(f)
+
+        return pd.DataFrame(data)
+
+    except:
+        return pd.DataFrame()
+
+
+def detect_portfolio_changes(current_df, previous_df):
+
+    if previous_df.empty:
+        return [], []
+
+    current_symbols = set(current_df["Ticker"].tolist())
+    previous_symbols = set(previous_df["Ticker"].tolist())
+
+    new_buys = list(current_symbols - previous_symbols)
+    removed_positions = list(previous_symbols - current_symbols)
+
+    return new_buys, removed_positions
+
+# =====================================================
 # FILE UPLOADS
 # =====================================================
 
@@ -179,6 +322,11 @@ with col1:
     holdings_file = st.file_uploader(
         "Upload Holdings Export (.csv)",
         type=["csv"]
+    )
+
+    screenshot_file = st.file_uploader(
+        "Upload VV Portfolio Screenshot (.png/.jpg)",
+        type=["png", "jpg", "jpeg"]
     )
 
 with col2:
@@ -236,6 +384,40 @@ else:
     )
 
     df = create_sample_data()
+
+# =====================================================
+# OCR HOLDINGS EXTRACTION
+# =====================================================
+
+ocr_df = pd.DataFrame()
+
+if screenshot_file:
+
+    image = Image.open(screenshot_file)
+
+    st.image(
+        image,
+        caption="Geüploade VV holdings screenshot",
+        use_container_width=True
+    )
+
+    with st.spinner("OCR holdings parser actief..."):
+
+        ocr_df = extract_holdings_from_screenshot(image)
+
+    if not ocr_df.empty:
+
+        st.success(
+            f"OCR parser detecteerde {len(ocr_df)} actieve holdings"
+        )
+
+        st.dataframe(
+            ocr_df,
+            use_container_width=True
+        )
+
+        # screenshot holdings overrulen trade reconstruction
+        df = ocr_df.copy()
 
 # =====================================================
 # COLUMN STANDARDIZATION
@@ -393,6 +575,43 @@ for value in tracker_df["VV vs IB %"]:
         conditions.append("SKIP")
 
 tracker_df["Execution Status"] = conditions
+
+# =====================================================
+# PORTFOLIO MEMORY + CHANGE DETECTION
+# =====================================================
+
+previous_memory_df = load_previous_memory()
+
+new_buys, removed_positions = detect_portfolio_changes(
+    tracker_df,
+    previous_memory_df
+)
+
+save_portfolio_memory(tracker_df)
+
+st.header("🧠 Portfolio State Intelligence")
+
+col1, col2 = st.columns(2)
+
+with col1:
+
+    st.subheader("🟢 Nieuwe BUY Signals")
+
+    if new_buys:
+        for item in new_buys:
+            st.success(f"Nieuwe BUY: {item}")
+    else:
+        st.info("Geen nieuwe BUY signals")
+
+with col2:
+
+    st.subheader("🔴 Gesloten Posities")
+
+    if removed_positions:
+        for item in removed_positions:
+            st.error(f"Gesloten positie: {item}")
+    else:
+        st.info("Geen gesloten posities")
 
 # =====================================================
 # DISPLAY TRACKER
