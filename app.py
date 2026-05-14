@@ -70,6 +70,104 @@ st.sidebar.metric(
 )
 
 # =====================================================
+# VECTORVEST TRADE RECONSTRUCTION ENGINE
+# =====================================================
+
+import re
+
+
+def parse_trade_history(df_raw):
+    parsed_rows = []
+
+    # mogelijke VV trade history formaten
+    possible_symbol_cols = [
+        "Symbol",
+        "symbol"
+    ]
+
+    possible_open_cols = [
+        "Open",
+        "Open Date",
+        "OpenDate"
+    ]
+
+    possible_close_cols = [
+        "Close",
+        "Close Date",
+        "CloseDate"
+    ]
+
+    possible_price_cols = [
+        "Initial Price",
+        "InitialPrice",
+        "Price"
+    ]
+
+    possible_share_cols = [
+        "Shares",
+        "Quantity"
+    ]
+
+    symbol_col = next((c for c in possible_symbol_cols if c in df_raw.columns), None)
+    open_col = next((c for c in possible_open_cols if c in df_raw.columns), None)
+    close_col = next((c for c in possible_close_cols if c in df_raw.columns), None)
+    price_col = next((c for c in possible_price_cols if c in df_raw.columns), None)
+    share_col = next((c for c in possible_share_cols if c in df_raw.columns), None)
+
+    if symbol_col is None:
+        st.error("Geen Symbol kolom gevonden in trade history.")
+        st.stop()
+
+    # reconstrueer actieve trades
+    for _, row in df_raw.iterrows():
+
+        symbol = row.get(symbol_col)
+
+        close_value = ""
+
+        if close_col:
+            close_value = str(row.get(close_col, "")).strip()
+
+        # enkel OPEN trades behouden
+        is_open_trade = (
+            close_value == "" or
+            close_value.lower() == "nan" or
+            close_value.lower() == "none"
+        )
+
+        if is_open_trade:
+
+            parsed_rows.append({
+                "Symbol": symbol,
+                "VV_BuyPrice": row.get(price_col, np.nan),
+                "Shares": row.get(share_col, np.nan),
+                "OpenDate": row.get(open_col, "")
+            })
+
+    parsed_df = pd.DataFrame(parsed_rows)
+
+    # fallback wanneer VV alles als gesloten markeert
+    # → laatste 10 trades gebruiken
+    if parsed_df.empty:
+
+        st.warning(
+            "Geen open trades gedetecteerd → fallback naar laatste actieve VV trades."
+        )
+
+        fallback_df = df_raw.tail(10).copy()
+
+        parsed_df = pd.DataFrame({
+            "Symbol": fallback_df[symbol_col],
+            "VV_BuyPrice": fallback_df.get(price_col, np.nan),
+            "Shares": fallback_df.get(share_col, np.nan),
+            "OpenDate": fallback_df.get(open_col, "")
+        })
+
+    parsed_df = parsed_df.drop_duplicates(subset=["Symbol"])
+
+    return parsed_df
+
+# =====================================================
 # FILE UPLOADS
 # =====================================================
 
@@ -102,14 +200,41 @@ def create_sample_data():
         "REC": ["BUY", "BUY", "BUY", "BUY"]
     })
 
-if holdings_file:
+df = None
+
+# trade history wordt nu PRIMARY SOURCE OF TRUTH
+if trade_log_file:
+
+    try:
+        raw_trade_df = pd.read_csv(trade_log_file)
+
+        st.success(
+            f"Trade history geladen: {len(raw_trade_df)} rows"
+        )
+
+        df = parse_trade_history(raw_trade_df)
+
+    except Exception as e:
+
+        st.error(f"Kon trade history niet verwerken: {e}")
+        st.stop()
+
+# holdings export enkel als fallback
+elif holdings_file:
+
     try:
         df = pd.read_csv(holdings_file)
+
     except:
         st.error("Kon holdings file niet lezen.")
         st.stop()
+
 else:
-    st.warning("Geen holdings upload gevonden → sample data geladen")
+
+    st.warning(
+        "Geen bestanden geüpload → sample data geladen"
+    )
+
     df = create_sample_data()
 
 # =====================================================
@@ -466,10 +591,18 @@ st.header("🛠 Workflow")
 st.markdown(
     """
 ### Stap 1
-Exporteer holdings/trade log uit VectorVest.
+Exporteer ENKEL tradehistory.csv uit VectorVest.
+
+Holdings exports zijn niet langer vereist.
 
 ### Stap 2
-Upload CSV bestanden hierboven.
+Upload tradehistory.csv.
+
+De app reconstrueert automatisch:
+- open trades
+- VV buy prices
+- shares
+- huidige holdings
 
 ### Stap 3
 De app:
@@ -504,4 +637,3 @@ st.success(
 st.caption(
     "Delayed pricing via Yahoo Finance | Built for educational/research purposes"
 )
-
