@@ -345,6 +345,27 @@ tracker_df["SL Price"] = (
     (1 - ((stop_loss_pct + ib_fee_pct) / 100))
 ).round(2)
 
+# forceer numerieke types
+tracker_df["IB Entry Price"] = pd.to_numeric(
+    tracker_df["IB Entry Price"],
+    errors="coerce"
+)
+
+tracker_df["VV Buy Price"] = pd.to_numeric(
+    tracker_df["VV Buy Price"],
+    errors="coerce"
+)
+
+tracker_df["Current Price"] = pd.to_numeric(
+    tracker_df["Current Price"],
+    errors="coerce"
+)
+
+tracker_df["Shares To Buy"] = pd.to_numeric(
+    tracker_df["Shares To Buy"],
+    errors="coerce"
+)
+
 tracker_df["VV vs IB %"] = (
     (
         tracker_df["IB Entry Price"] -
