@@ -210,8 +210,7 @@ def extract_holdings_from_screenshot(image):
     try:
 
         text = pytesseract.image_to_string(image)
-        lines = text.split("
-")
+        lines = text.split("\n")
 
         parsed_rows = []
 
